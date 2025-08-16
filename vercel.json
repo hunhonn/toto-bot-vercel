@@ -1,0 +1,14 @@
+{
+    "functions": {
+      "api/*.py": {
+        "runtime": "python3.11"
+      }
+    },
+    "crons": [
+      {
+        "path": "/api/check",
+        "schedule": "*/30 * * * *"
+      }
+    ]
+  }
+  
