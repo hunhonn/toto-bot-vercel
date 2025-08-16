@@ -2,8 +2,12 @@ import json
 import os
 import requests
 from http.server import BaseHTTPRequestHandler
+from datetime import datetime, timedelta
+import pytz
 
 from ._shared import fetch_page, parse_latest_draw_no, parse_next_jackpot_amount, is_next_draw_cascade
+
+SGT = pytz.timezone("Asia/Singapore")
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN","")
 CHAT_ID = os.environ.get("CHAT_ID","")
@@ -19,6 +23,28 @@ def send_telegram(text: str):
         "parse_mode": "HTML", "disable_web_page_preview": True
     }
     requests.post(url,json = payload, timeout=10)
+
+def is_draw_day_and_time(now_sgt: datetime, cascade_next: bool) -> bool:
+    weekday = now_sgt.weekday()  # Monday=0 ... Sunday=6
+    hour, minute = now_sgt.hour, now_sgt.minute
+
+    # Default draw cutoff: 18:40 (6:40pm)
+    cutoff_hour, cutoff_min = 18, 40
+
+    # First Wednesday of month → cutoff at 19:40
+    if weekday == 2 and now_sgt.day <= 7:  # Wednesday (2)
+        cutoff_hour, cutoff_min = 19, 40
+
+    # Normal TOTO draws: Mon (0), Thu (3)
+    if weekday in (0, 3):
+        return (hour > cutoff_hour or (hour == cutoff_hour and minute >= cutoff_min))
+
+    # Cascade case: Friday (4) → draw at 21:30 instead of Thu
+    if weekday == 4 and cascade_next:
+        return (hour > 21 or (hour == 21 and minute >= 30))
+
+    # Other lottery draws (Wed, Sat, Sun are 4D, not TOTO)
+    return False
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -37,7 +63,17 @@ class handler(BaseHTTPRequestHandler):
                 except Exception:
                     cascade_next = False
 
-            # 3) Build result
+            # 3) Check draw day & time BEFORE doing anything else
+            now_sgt = datetime.now(SGT)
+            if not is_draw_day_and_time(now_sgt, cascade_next):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"skipped": true}')
+                return
+
+
+            # 4) Build result + decide whether to send Telegram
             result = {
                 "latest_draw_no": latest_draw_no,
                 "next_jackpot": next_jackpot,
@@ -45,23 +81,16 @@ class handler(BaseHTTPRequestHandler):
                 "threshold": JACKPOT_THRESHOLD,
             }
 
-            # 4) Decide whether to notify
-            # NOTE: This endpoint is stateless; it will notify every time the condition is true.
-            # If you want "notify once per draw", wire in a KV/Redis key and remember the last notified draw.
-            dry = ("?dry=1" in self.path) or ("&dry=1" in self.path)
-            should_alert = (next_jackpot is not None and next_jackpot > JACKPOT_THRESHOLD) or cascade_next
-
-            if should_alert and not dry:
+            should_alert = (next_jackpot and next_jackpot > JACKPOT_THRESHOLD) or cascade_next
+            if should_alert:
                 lines = []
-                if next_jackpot is not None and next_jackpot > JACKPOT_THRESHOLD:
-                    lines.append(f"💰 <b>TOTO jackpot exceeds S$10M</b> — est: <b>S${next_jackpot:,}</b>")
+                if next_jackpot and next_jackpot > JACKPOT_THRESHOLD:
+                    lines.append(f"💰 TOTO jackpot exceeds S$10M — est: S${next_jackpot:,}")
                 if cascade_next:
-                    lines.append("⚠️ <b>Next draw is a Cascade Draw</b> (after 3 consecutive no-winner draws).")
-                if latest_draw_no:
-                    lines.append(f"(Latest draw checked: #{latest_draw_no})")
+                    lines.append("⚠️ Next draw is a Cascade Draw.")
                 send_telegram("\n".join(lines))
 
-            # 5) Respond JSON
+            # 5) Respond with JSON as usual
             body = json.dumps(result).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
