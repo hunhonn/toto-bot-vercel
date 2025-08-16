@@ -16,13 +16,19 @@ JACKPOT_THRESHOLD = int(os.environ.get("JACKPOT_THRESHOLD", "10000000"))
 def send_telegram(text: str):
     if not TELEGRAM_TOKEN or not CHAT_ID:
         return
-    url = f"https:api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID,
         "text": text,
-        "parse_mode": "HTML", "disable_web_page_preview": True
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
     }
-    requests.post(url,json = payload, timeout=10)
+    try:
+        r = requests.post(url, json=payload, timeout=10)
+        if r.status_code >= 300:
+            print("Telegram failed", r.status_code, r.text)
+    except Exception as e:
+        print("Telegram exception:", repr(e))
 
 def is_draw_day_and_time(now_sgt: datetime, cascade_next: bool) -> bool:
     weekday = now_sgt.weekday()  # Monday=0 ... Sunday=6

@@ -19,7 +19,10 @@ def fetch_page(draw_no: Optional[int] = None)-> str:
         url = SP_RESULTS_URL
     else:
         url = f"{SP_RESULTS_URL}?sppl={_b64_draw(draw_no)}"
-    resp = requests.get(url, timeout=15)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; TotoBot/1.0; +https://github.com/your-repo)"
+    }
+    resp = requests.get(url, headers=headers, timeout=15)
     resp.raise_for_status()
     return resp.text
 
