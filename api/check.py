@@ -3,6 +3,7 @@ import os
 import requests
 from http.server import BaseHTTPRequestHandler
 from datetime import datetime, timedelta
+from urllib.parse import urlparse, parse_qs
 import pytz
 
 from ._shared import fetch_page, parse_latest_draw_no, parse_next_jackpot_amount, is_next_draw_cascade
@@ -11,7 +12,8 @@ SGT = pytz.timezone("Asia/Singapore")
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN","")
 CHAT_ID = os.environ.get("CHAT_ID","")
-JACKPOT_THRESHOLD = int(os.environ.get("JACKPOT_THRESHOLD", "10000000"))
+JACKPOT_THRESHOLD = int(os.environ.get("JACKPOT_THRESHOLD", "9999999"))
+TEST_KEY = os.environ.get("TEST_KEY","")
 
 def send_telegram(text: str):
     if not TELEGRAM_TOKEN or not CHAT_ID:
@@ -56,6 +58,21 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         # Optional dry run: /api/check?dry=1
         try:
+            qs = parse_qs(urlparse(self.path).query)
+            def allowed_test():
+                return TEST_KEY and qs.get("key", [""])[0] == TEST_KEY
+
+            # Quick Telegram test (no scraping, no time gating)
+            if "test_telegram" in qs and allowed_test():
+                send_telegram("🔔 Toto bot test alert from Vercel production.")
+                body = json.dumps({"test_telegram": True}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
             # 1) Get latest results page
             html = fetch_page()
             latest_draw_no = parse_latest_draw_no(html)
@@ -69,15 +86,17 @@ class handler(BaseHTTPRequestHandler):
                 except Exception:
                     cascade_next = False
 
+            # Allow bypass of time gate for testing
+            bypass = allowed_test() and qs.get("bypass", ["0"])[0] == "1"
+
             # 3) Check draw day & time BEFORE doing anything else
             now_sgt = datetime.now(SGT)
-            if not is_draw_day_and_time(now_sgt, cascade_next):
+            if not bypass and not is_draw_day_and_time(now_sgt, cascade_next):
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(b'{"skipped": true}')
                 return
-
 
             # 4) Build result + decide whether to send Telegram
             result = {
@@ -85,8 +104,9 @@ class handler(BaseHTTPRequestHandler):
                 "next_jackpot": next_jackpot,
                 "cascade_next_draw": cascade_next,
                 "threshold": JACKPOT_THRESHOLD,
+                "env": os.environ.get("VERCEL_ENV"),
             }
-
+            alerted = False
             should_alert = (next_jackpot and next_jackpot > JACKPOT_THRESHOLD) or cascade_next
             if should_alert:
                 lines = []
@@ -94,7 +114,14 @@ class handler(BaseHTTPRequestHandler):
                     lines.append(f"💰 TOTO jackpot exceeds S$10M — est: S${next_jackpot:,}")
                 if cascade_next:
                     lines.append("⚠️ Next draw is a Cascade Draw.")
-                send_telegram("\n".join(lines))
+                try:
+                    send_telegram("\n".join(lines))
+                    alerted = True
+                except Exception as alert_err:
+                    print("Alert error:", repr(alert_err))
+            result["alerted"] = alerted
+            result["has_token"] = bool(TELEGRAM_TOKEN)
+            result["has_chat_id"] = bool(CHAT_ID)
 
             # 5) Respond with JSON as usual
             body = json.dumps(result).encode("utf-8")
