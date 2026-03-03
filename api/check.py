@@ -145,6 +145,37 @@ class handler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
                 return
 
+            # Force alert test (with real data but forced conditions)
+            if "force_alert" in qs and allowed_test():
+                html = fetch_page()
+                latest_draw_no = parse_latest_draw_no(html)
+                next_jackpot = parse_next_jackpot_amount(html) or 15000000
+                cascade_next = True
+                now_sgt = datetime.now(SGT)
+                next_draw_dt = get_next_draw_datetime(now_sgt, cascade_next)
+                next_draw_label = format_next_draw_label(next_draw_dt, cascade_next)
+                
+                lines = [
+                    f"💰 TOTO jackpot exceeds S$10M — est: S${next_jackpot:,}",
+                    "⚠️ Next draw is a Cascade Draw.",
+                    f"Next draw: {next_draw_label}",
+                    "",
+                    "🧪 TEST ALERT (force_alert mode)"
+                ]
+                ok = send_telegram("\n".join(lines))
+                body = json.dumps({
+                    "force_alert": True,
+                    "sent": ok,
+                    "latest_draw_no": latest_draw_no,
+                    "next_jackpot": next_jackpot,
+                }).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
             # 1) Get latest results page
             html = fetch_page()
             latest_draw_no = parse_latest_draw_no(html)
