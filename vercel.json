@@ -1,9 +1,20 @@
 {
-    "crons": [
-      {
-        "path": "/api/check",
-        "schedule": "0 12 * * *"
-      }
-    ]
-  }
-  
+  "crons": [
+    {
+      "path": "/api/check",
+      "schedule": "45 10 * * 1"
+    },
+    {
+      "path": "/api/check",
+      "schedule": "45 10 * * 4"
+    },
+    {
+      "path": "/api/check",
+      "schedule": "35 13 * * 5"
+    },
+    {
+      "path": "/api/check",
+      "schedule": "45 11 1-7 * 3"
+    }
+  ]
+}
