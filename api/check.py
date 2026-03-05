@@ -155,13 +155,16 @@ class handler(BaseHTTPRequestHandler):
                 next_draw_dt = get_next_draw_datetime(now_sgt, cascade_next)
                 next_draw_label = format_next_draw_label(next_draw_dt, cascade_next)
                 
-                lines = [
-                    f"💰 TOTO jackpot exceeds S$10M — est: S${next_jackpot:,}",
-                    "⚠️ Next draw is a Cascade Draw.",
-                    f"Next draw: {next_draw_label}",
-                    "",
-                    "🧪 TEST ALERT (force_alert mode)"
-                ]
+                lines = []
+                if next_jackpot >= 10000000:
+                    lines.append(f"💰 TOTO jackpot exceeds S$10M — est: S${next_jackpot:,}")
+                elif next_jackpot >= 5000000:
+                    lines.append(f"💰 TOTO jackpot exceeds S$5M — est: S${next_jackpot:,}")
+                if cascade_next:
+                    lines.append("⚠️ Next draw is a Cascade Draw.")
+                lines.append(f"Next draw: {next_draw_label}")
+                lines.append("")
+                lines.append("🧪 TEST ALERT (force_alert mode)")
                 ok = send_telegram("\n".join(lines))
                 body = json.dumps({
                     "force_alert": True,
@@ -219,7 +222,8 @@ class handler(BaseHTTPRequestHandler):
             }
             alerted = False
             deduped = False
-            should_alert = (next_jackpot and next_jackpot > JACKPOT_THRESHOLD) or cascade_next
+            # Alert if: jackpot >= 5M OR it's a cascade draw
+            should_alert = (next_jackpot and next_jackpot >= 5000000) or cascade_next
             if should_alert:
                 signature = _build_alert_signature(latest_draw_no, next_jackpot, cascade_next)
                 last_signature = _load_last_alert_signature()
@@ -227,14 +231,17 @@ class handler(BaseHTTPRequestHandler):
                     deduped = True
                 else:
                     lines = []
-                    if next_jackpot and next_jackpot > JACKPOT_THRESHOLD:
+                    if next_jackpot and next_jackpot >= 10000000:
                         lines.append(f"💰 TOTO jackpot exceeds S$10M — est: S${next_jackpot:,}")
+                    elif next_jackpot and next_jackpot >= 5000000:
+                        lines.append(f"💰 TOTO jackpot exceeds S$5M — est: S${next_jackpot:,}")
                     if cascade_next:
                         lines.append("⚠️ Next draw is a Cascade Draw.")
-                    lines.append(f"Next draw: {next_draw_label}")
-                    if send_telegram("\n".join(lines)):
-                        alerted = True
-                        _save_last_alert_signature(signature)
+                    if lines:  # Only send if we have content
+                        lines.append(f"Next draw: {next_draw_label}")
+                        if send_telegram("\n".join(lines)):
+                            alerted = True
+                            _save_last_alert_signature(signature)
             result["alerted"] = alerted
             result["deduped"] = deduped
             result["has_token"] = bool(TELEGRAM_TOKEN)
